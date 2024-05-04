@@ -37,6 +37,7 @@ The decompression routines are implemented as device functions. Use the routine 
 
 ```
 mkdir -p bin/bench
+mkdir -p obj/bench
 make bench/gen bench/gen_d1 bench/gen_d2
 ./bin/bench/gen <num_bits>
 ./bin/bench/gen_d1 <num_bits>
@@ -51,6 +52,14 @@ Note these will written out the DATA_DIR defined in `ssb/ssb_utils.h` as flat fi
 
 Follow the instructions [here](https://github.com/anilshanbhag/crystal)
 
+**Before Starting the Experiment**
+```
+mkdir -p bin/bench
+mkdir -p obj/bench
+mkdir -p bin/ssb
+mkdir -p obj/ssb
+```
+
 **To encode the data to GPU-\* format**
 
 The above two steps will generate flat files which contain 4-byte integer arrays. To generate the encoded columns:
@@ -59,9 +68,11 @@ The above two steps will generate flat files which contain 4-byte integer arrays
 # For test distributions
 make bench/binpack
 make bench/deltabinpack
+make bench/rlebinpack
 
 ./bin/bench/binpack <num_bits>
 ./bin/bench/deltabinpack <num_bits>
+./bin/bench/rlebinpack <num_bits>
 
 # For SSB columns
 make ssb/binpack
@@ -75,8 +86,6 @@ make ssb/rlebinpack
 
 **To compile and run test_perf_rle and test_match_rle**
 ```
-mkdir -p bin/ssb
-mkdir -p obj/ssb
 make bin/ssb/test_perf_rle
 make bin/ssb/test_match_rle
 
@@ -86,8 +95,6 @@ make bin/ssb/test_match_rle
 
 **To compile and run SSB queries**
 ```
-mkdir -p bin/ssb
-mkdir -p obj/ssb
 make bin/ssb/q11r
 make bin/ssb/q21r
 make bin/ssb/q31r
