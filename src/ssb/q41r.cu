@@ -377,7 +377,7 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl, 
  */
 int main(int argc, char** argv)
 {
-  int num_trials          = 3;
+  int num_trials          = 5;
 
   int *h_d_datekey = loadColumn<int>("d_datekey", D_LEN);
   int *h_d_year = loadColumn<int>("d_year", D_LEN);

@@ -12,7 +12,7 @@
 
 #include "../kernel.cuh"
 #include "utils/gpu_utils.h"
-#include "ssb_gpu_utils.h"
+#include "../ssb/ssb_gpu_utils.h"
 
 using namespace std;
 using namespace cub;
@@ -42,6 +42,7 @@ __global__ void runRBinKernel(
   }
 
   extern __shared__ uint shared_buffer[];
+  // __shared__ uint shared_buffer[128 + BLOCK_THREADS * ITEMS_PER_THREAD * 2];
   LoadRBinPack<BLOCK_THREADS, ITEMS_PER_THREAD>(val_block_start, rl_block_start,
     val_data, rl_data, shared_buffer, val_block, rl_block, is_last_tile, num_tile_items);
 
@@ -52,16 +53,16 @@ __global__ void runRBinKernel(
   }
 }
 
-
 float runSinglePass(
     encoded_column val_col, encoded_column rl_col,
     int num_items, string encoding,
-    CachingDeviceAllocator&  g_allocator, int* col) {
+    CachingDeviceAllocator&  g_allocator, int* h_col_orig) {
   // Kernel timing
   float time_query;
   SETUP_TIMING();
 
-  int *unpack_bitpack = NULL, *for_decoded = NULL;
+  int* col = NULL, *unpack_bitpack = NULL, *for_decoded = NULL;
+  CubDebugExit(g_allocator.DeviceAllocate((void**) &col, num_items * sizeof(int)));
   CubDebugExit(g_allocator.DeviceAllocate((void**) &unpack_bitpack, num_items * sizeof(int)));
   CubDebugExit(g_allocator.DeviceAllocate((void**) &for_decoded, num_items * sizeof(int)));
 
@@ -86,6 +87,18 @@ float runSinglePass(
   CubDebugExit(cudaPeekAtLastError());
   CubDebugExit(cudaDeviceSynchronize());
 
+  // Copy revenue from device to host 
+  int* h_col = new int[num_items];
+  CubDebugExit(cudaMemcpy(h_col, col, sizeof(int) * num_items, cudaMemcpyDeviceToHost));
+
+  for (int i=0; i<num_items; i++) {
+    if (h_col_orig[i] != h_col[i]) {
+      cout << "ERROR:" << i << " " << h_col_orig[i] << " " << h_col[i] << endl;
+      return -1;
+    }
+  }
+  cout << "Inputs match ! " << endl;
+
   return time_query;
 }
 
@@ -93,35 +106,29 @@ float runSinglePass(
   * The goal is to test is col encoding can be decoded and if it same as original array.
   */
 int main(int argc, char** argv) {
-  int num_trials = 5;
 
   if (argc != 2) return 0;
 
-  //./bin/ssb/test_match_rle lo_orderkey
   string column_name = argv[1];
   string encoding = "rbin";
 
   int len = LO_LEN;
 
+  int *h_col_orig = loadColumn<int>(column_name, len);
+
   encoded_column val_col = loadEncodedColumnToGPURLE(column_name, "valbin", len, g_allocator);
   encoded_column rl_col = loadEncodedColumnToGPURLE(column_name, "rlbin", len, g_allocator);
 
-  int *col;
-  CubDebugExit(g_allocator.DeviceAllocate((void**) &col, len * sizeof(int)));
-
   cudaDeviceSynchronize();
 
-  for (int t = 0; t < num_trials; t++) {
-    float time_query;
-
-    time_query = runSinglePass(val_col, rl_col,
+  float time_query;
+  time_query = runSinglePass(val_col, rl_col,
                      len, encoding,
-                     g_allocator, col);
+                     g_allocator, h_col_orig);
 
-    cout << "{" << "\"query\":6" << ",\"time_query\":" << time_query << "}" << endl;
+  cout << "{" << "\"query\":6" << ",\"time_query\":" << time_query << "}" << endl;
 
-    cudaDeviceSynchronize(); 
-  }
+  cudaDeviceSynchronize(); 
 
   return 0;
 }

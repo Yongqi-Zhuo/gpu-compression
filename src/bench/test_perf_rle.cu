@@ -12,13 +12,20 @@
 
 #include "../kernel.cuh"
 #include "utils/gpu_utils.h"
-#include "ssb_gpu_utils.h"
+#include "../ssb/ssb_gpu_utils.h"
 
 using namespace std;
 using namespace cub;
 
 CachingDeviceAllocator  g_allocator(true);
 
+template<typename T>
+T* loadToGPU(T* src, int numEntries, CachingDeviceAllocator& g_allocator) {
+  T* dest;
+  CubDebugExit(g_allocator.DeviceAllocate((void**)&dest, sizeof(T) * numEntries));
+  CubDebugExit(cudaMemcpy(dest, src, sizeof(T) * numEntries, cudaMemcpyHostToDevice));
+  return dest;
+}
 
 template<int BLOCK_THREADS, int ITEMS_PER_THREAD>
 __global__ void runRBinKernel(
@@ -51,7 +58,6 @@ __global__ void runRBinKernel(
     col[tile_size * tile_idx + i * BLOCK_THREADS + threadIdx.x] = val_block[i];
   }
 }
-
 
 float runSinglePass(
     encoded_column val_col, encoded_column rl_col,
@@ -94,29 +100,33 @@ float runSinglePass(
   */
 int main(int argc, char** argv) {
   int num_trials = 5;
-
   if (argc != 2) return 0;
 
-  //./bin/ssb/test_match_rle lo_orderkey
   string column_name = argv[1];
   string encoding = "rbin";
 
-  int len = LO_LEN;
+  int len = 1<<28;
 
   encoded_column val_col = loadEncodedColumnToGPURLE(column_name, "valbin", len, g_allocator);
+
   encoded_column rl_col = loadEncodedColumnToGPURLE(column_name, "rlbin", len, g_allocator);
 
-  int *col;
-  CubDebugExit(g_allocator.DeviceAllocate((void**) &col, len * sizeof(int)));
+  cout << "Column loaded" << endl;
+
+  int *test = loadColumn<int>(column_name, len);
+  int *d_test = loadToGPU<int>(test, len, g_allocator);
+
+  int *d_out;
+  ALLOCATE(d_out, len * sizeof(int));
 
   cudaDeviceSynchronize();
 
+  // Run trials
   for (int t = 0; t < num_trials; t++) {
     float time_query;
-
     time_query = runSinglePass(val_col, rl_col,
-                     len, encoding,
-                     g_allocator, col);
+                       len, encoding,
+                       g_allocator, d_out);
 
     cout << "{" << "\"query\":6" << ",\"time_query\":" << time_query << "}" << endl;
 

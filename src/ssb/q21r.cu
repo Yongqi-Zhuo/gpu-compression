@@ -320,7 +320,7 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
  */
 int main(int argc, char** argv)
 {
-  int num_trials          = 3;
+  int num_trials          = 5;
 
   int *h_p_partkey = loadColumn<int>("p_partkey", P_LEN);
   int *h_p_brand1 = loadColumn<int>("p_brand1", P_LEN);
