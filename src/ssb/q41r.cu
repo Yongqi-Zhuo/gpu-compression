@@ -106,9 +106,8 @@ __global__ void probe(//int* lo_orderdate, int* lo_partkey, int* lo_custkey, int
   for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
   {
     // Out-of-bounds items are selection_flags
-    int hash = HASH(items[ITEM], s_len);
-
-    if (!is_last_tile || (int(threadIdx.x * ITEMS_PER_THREAD) + ITEM < num_tile_items)) {
+    if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items)) {
+      int hash = HASH(items[ITEM], s_len);
       int slot = ht_s[hash << 1];
       if (slot != 0) {
         /*s_nation[ITEM] = ht_s[(hash << 1) + 1];*/
@@ -130,7 +129,7 @@ __global__ void probe(//int* lo_orderdate, int* lo_partkey, int* lo_custkey, int
   #pragma unroll
   for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
   {
-    if (!is_last_tile || (int(threadIdx.x * ITEMS_PER_THREAD) + ITEM < num_tile_items)) {
+    if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items)) {
       // Out-of-bounds items are selection_flags
       if (selection_flags[ITEM]) {
         int hash = HASH(items[ITEM], c_len);
@@ -155,7 +154,7 @@ __global__ void probe(//int* lo_orderdate, int* lo_partkey, int* lo_custkey, int
   #pragma unroll
   for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
   {
-    if (!is_last_tile || (int(threadIdx.x * ITEMS_PER_THREAD) + ITEM < num_tile_items)) {
+    if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items)) {
       // Out-of-bounds items are selection_flags
       if (selection_flags[ITEM]) {
         int hash = HASH(items[ITEM], p_len);
@@ -185,7 +184,7 @@ __global__ void probe(//int* lo_orderdate, int* lo_partkey, int* lo_custkey, int
     // Out-of-bounds items are selection_flags
     int hash = HASH_WM(items[ITEM], d_len, 19920101);
 
-    if (!is_last_tile || (int(threadIdx.x * ITEMS_PER_THREAD) + ITEM < num_tile_items)) {
+    if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items)) {
       if (selection_flags[ITEM]) {
         int slot = ht_d[hash << 1];
         if (slot != 0) {
@@ -213,7 +212,7 @@ __global__ void probe(//int* lo_orderdate, int* lo_partkey, int* lo_custkey, int
 
   #pragma unroll
   for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM) {
-    if (!is_last_tile || (int(threadIdx.x * ITEMS_PER_THREAD) + ITEM < num_tile_items)) {
+    if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items)) {
       if (selection_flags[ITEM]) {
         int hash = (c_nation[ITEM] * 7 +  (year[ITEM] - 1992)) % ((1998-1992+1) * 25);
         res[hash * 4] = year[ITEM];

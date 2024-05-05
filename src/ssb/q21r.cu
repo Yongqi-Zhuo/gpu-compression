@@ -105,13 +105,14 @@ __global__ void probe(
     for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
     {
       // Out-of-bounds items are selection_flags
-      int hash = HASH(items[ITEM], s_len);
-
-      int slot = ht_s[hash];
-      if (slot != 0) {
-        selection_flags[ITEM] = 1;
-      } else {
-        selection_flags[ITEM] = 0;
+      if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items)) {
+        int hash = HASH(items[ITEM], s_len);
+        int slot = ht_s[hash];
+        if (slot != 0) {
+          selection_flags[ITEM] = 1;
+        } else {
+          selection_flags[ITEM] = 0;
+        }
       }
     }
 
@@ -127,14 +128,15 @@ __global__ void probe(
     for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
     {
         // Out-of-bounds items are selection_flags
-        int hash = HASH(items[ITEM], p_len);
-
-        if (selection_flags[ITEM]) {
-          uint64_t slot = *reinterpret_cast<uint64_t*>(&ht_p[hash << 1]);
-          if (slot != 0) {
-            brand[ITEM] = (slot >> 32);
-          } else {
-            selection_flags[ITEM] = 0;
+        if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items)) {
+          int hash = HASH(items[ITEM], p_len);
+          if (selection_flags[ITEM]) {
+            uint64_t slot = *reinterpret_cast<uint64_t*>(&ht_p[hash << 1]);
+            if (slot != 0) {
+              brand[ITEM] = (slot >> 32);
+            } else {
+              selection_flags[ITEM] = 0;
+            }
           }
         }
     }
@@ -153,11 +155,12 @@ __global__ void probe(
     for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
     {
       // Out-of-bounds items are selection_flags
-      int hash = HASH_WM(items[ITEM], d_len, 19920101);
-
-      if (selection_flags[ITEM]) {
-        // int slot = ht_p[hash << 1];
-        year[ITEM] = ht_d[(hash << 1) + 1];
+      if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items)) {
+        int hash = HASH_WM(items[ITEM], d_len, 19920101);
+        if (selection_flags[ITEM]) {
+          // int slot = ht_p[hash << 1];
+          year[ITEM] = ht_d[(hash << 1) + 1];
+        }
       }
     }
 
@@ -171,11 +174,13 @@ __global__ void probe(
 
     #pragma unroll
     for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM) {
-      if (selection_flags[ITEM]) {
-        int hash = (brand[ITEM] * 7 +  (year[ITEM] - 1992)) % ((1998-1992+1) * (5*5*40));
-        res[hash * 4] = year[ITEM];
-        res[hash * 4 + 1] = brand[ITEM];
-        atomicAdd(reinterpret_cast<unsigned long long*>(&res[hash * 4 + 2]), (long long)(revenue[ITEM]));
+      if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items)) {
+        if (selection_flags[ITEM]) {
+          int hash = (brand[ITEM] * 7 +  (year[ITEM] - 1992)) % ((1998-1992+1) * (5*5*40));
+          res[hash * 4] = year[ITEM];
+          res[hash * 4 + 1] = brand[ITEM];
+          atomicAdd(reinterpret_cast<unsigned long long*>(&res[hash * 4 + 2]), (long long)(revenue[ITEM]));
+        }
       }
     }
   } 

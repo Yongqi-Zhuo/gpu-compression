@@ -81,7 +81,7 @@ __global__ void QueryKernel(
     // Out-of-bounds items are selection_flags
     selection_flags[ITEM] = 1;
 
-    if (!is_last_tile || (int(threadIdx.x * ITEMS_PER_THREAD) + ITEM < num_tile_items))
+    if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items))
       selection_flags[ITEM] = (items[ITEM] > 19930000 && items[ITEM] < 19940000); 
   }
 
@@ -95,7 +95,7 @@ __global__ void QueryKernel(
   #pragma unroll
   for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
   {
-    if (!is_last_tile || (int(threadIdx.x * ITEMS_PER_THREAD) + ITEM < num_tile_items))
+    if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items))
       selection_flags[ITEM] = selection_flags[ITEM] && items[ITEM] < 25;
   }
 
@@ -109,7 +109,7 @@ __global__ void QueryKernel(
   #pragma unroll
   for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
   {
-    if (!is_last_tile || (int(threadIdx.x * ITEMS_PER_THREAD) + ITEM < num_tile_items))
+    if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items))
       selection_flags[ITEM] = selection_flags[ITEM] && items[ITEM] >= 1 && items[ITEM ] <= 3;
   }
 
@@ -122,7 +122,7 @@ __global__ void QueryKernel(
   #pragma unroll
   for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
   {
-    if (!is_last_tile || (int(threadIdx.x * ITEMS_PER_THREAD) + ITEM < num_tile_items))
+    if ((threadIdx.x + (BLOCK_THREADS * ITEM) < num_tile_items))
       if (selection_flags[ITEM])
         sum += items[ITEM] * items2[ITEM];
   }
