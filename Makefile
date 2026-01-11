@@ -4,14 +4,9 @@ CUDA_BIN_PATH   ?= $(CUDA_PATH)/bin
 
 NVCC = nvcc
 
-SM_TARGETS 	= -gencode=arch=compute_70,code=\"sm_70,compute_70\" 
-SM_DEF 		= -DSM700
-TEST_ARCH 	= 520
+SM_TARGETS 	= -gencode=arch=compute_120,code=\"sm_120,compute_120\" 
 
-GENCODE_SM50    := -gencode arch=compute_52,code=sm_52
-GENCODE_FLAGS   := $(GENCODE_SM50)
-
-NVCCFLAGS += --std=c++11 $(SM_DEF) -Xptxas="-dlcm=cg -v" -lineinfo -Xcudafe -\# 
+NVCCFLAGS += --std=c++17 -Xptxas="-dlcm=cg -v" -lineinfo -Xcudafe -\# 
 
 # Folder structure
 SRC = src
@@ -19,10 +14,10 @@ BIN = bin
 OBJ = obj
 INC = includes
 
-CUB_DIR = ./cub/
-INCLUDES = -I$(CUB_DIR) -I$(CUB_DIR)test -I. -I$(INC)
+CUB_DIR = $(CUDA_PATH)/targets/x86_64-linux/include/cccl
+INCLUDES = -I$(CUB_DIR) -I. -I$(INC)
 
-CFLAGS = -O3 -march=native -std=c++14 -ffast-math
+CFLAGS = -O3 -march=native -std=c++17 -ffast-math
 LDFLAGS = -ltbb
 CINCLUDES = -I$(INC)
 CXX = clang++
@@ -120,7 +115,7 @@ setup:
 	fi
 	mkdir -p obj/queries bin/queries
 
-all: setup cpu gpu
+all: cpu gpu
 
 codegentest:
 	$(NVCC) $(DEFINES) -lcurand $(SM_TARGETS) -o $(BIN_DIR)codegentest_$(BIN_SUFFIX) codegentest.cu $(NVCCFLAGS) $(CPU_ARCH) $(INC) $(LIBS) -O3
@@ -130,4 +125,3 @@ gentest:
 
 clean:
 	rm -rf bin/* obj/gpu/*.o obj/cpu/*.o obj/*.o
-

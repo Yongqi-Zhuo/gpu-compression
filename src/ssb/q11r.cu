@@ -14,6 +14,8 @@
 #include "ssb_gpu_utils.h"
 #include "econfig.h"
 
+#include "./benchmark.hpp"
+
 using namespace std;
 using namespace cub;
 
@@ -142,23 +144,28 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
   encoded_column lo_discount, encoded_column lo_quantity, 
     encoded_column lo_extendedprice,
     int lo_num_entries, CachingDeviceAllocator&  g_allocator) {
-  SETUP_TIMING();
+  casdec::benchmark::Stream stream;
+  // SETUP_TIMING();
 
-  float time_query;
-  chrono::high_resolution_clock::time_point st, finish;
-  st = chrono::high_resolution_clock::now();
+  // float time_query;
+  // chrono::high_resolution_clock::time_point st, finish;
+  // st = chrono::high_resolution_clock::now();
 
-  cudaEventRecord(start, 0);
+  // cudaEventRecord(start, 0);
 
   unsigned long long* d_sum = NULL;
-  CubDebugExit(g_allocator.DeviceAllocate((void**)&d_sum, sizeof(long long)));
-  cudaMemset(d_sum, 0, sizeof(long long));
+  CubDebugExit(g_allocator.DeviceAllocate((void**)&d_sum, sizeof(long long), stream));
+
+	auto numTotalRuns = casdec::benchmark::getDefaultNumTotalRuns();
+
+  auto bench = casdec::benchmark::benchmarkKernel([&](int i) {
+  cudaMemsetAsync(d_sum, 0, sizeof(long long), stream);
 
   // Run
   const int num_threads = 128;
   const int items_per_thread = 4;
   int tile_size = num_threads * items_per_thread;
-  QueryKernel<num_threads, items_per_thread><<<(lo_num_entries + tile_size - 1)/tile_size, 128>>>(
+  QueryKernel<num_threads, items_per_thread><<<(lo_num_entries + tile_size - 1)/tile_size, 128, 0, stream>>>(
           lo_orderdate_val.block_start, lo_orderdate_val.data,
           lo_orderdate_rl.block_start, lo_orderdate_rl.data,
           lo_discount.block_start, lo_discount.data,
@@ -166,22 +173,28 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
           lo_extendedprice.block_start, lo_extendedprice.data,
           lo_num_entries, d_sum);
 
-  cudaEventRecord(stop, 0);
-  cudaEventSynchronize(stop);
-  cudaEventElapsedTime(&time_query, start,stop);
+  // cudaEventRecord(stop, 0);
+  // cudaEventSynchronize(stop);
+  // cudaEventElapsedTime(&time_query, start,stop);
+
+  }, numTotalRuns, stream);
+
+	std::cerr << "Query time: " << bench << " ms" << std::endl;
+	auto speed = lo_num_entries / bench * 1e3;
+	std::cerr << "Processing speed: " << speed << " rows/s" << std::endl;
 
   unsigned long long revenue;
   CubDebugExit(cudaMemcpy(&revenue, d_sum, sizeof(long long), cudaMemcpyDeviceToHost));
 
-  finish = chrono::high_resolution_clock::now();
-  std::chrono::duration<double> diff = finish - st;
+  // finish = chrono::high_resolution_clock::now();
+  // std::chrono::duration<double> diff = finish - st;
 
   cout << "Revenue: " << revenue << endl;
-  cout << "Time Taken Total: " << diff.count() * 1000 << endl;
+  // cout << "Time Taken Total: " << diff.count() * 1000 << endl;
 
   CLEANUP(d_sum);
 
-  return time_query;
+  return bench.average;
 }
 
 /**
@@ -189,7 +202,7 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
  */
 int main(int argc, char** argv)
 {
-  int num_trials  = 5;
+  int num_trials  = 1;
   string encoding = ENCODING;
 
   encoded_column d_lo_extendedprice = loadEncodedColumnToGPU("lo_extendedprice", encoding, LO_LEN, g_allocator);
@@ -206,10 +219,10 @@ int main(int argc, char** argv)
     time_query = runQuery(d_lo_orderdate_val, d_lo_orderdate_rl, d_lo_discount, d_lo_quantity, 
             d_lo_extendedprice, 
             LO_LEN, g_allocator);
-    cout<< "{"
-        << "\"query\":11" 
-        << ",\"time_query\":" << time_query
-        << "}" << endl;
+    // cout<< "{"
+    //     << "\"query\":11" 
+    //     << ",\"time_query\":" << time_query
+    //     << "}" << endl;
   }
 
   return 0;

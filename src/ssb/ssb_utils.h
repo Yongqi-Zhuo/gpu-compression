@@ -16,9 +16,9 @@
 using namespace std;
 //using namespace cub;
 
-#define SF 10
+#define SF 100
 
-#define BASE_PATH "/home/ubuntu/gpu-compression/test/ssb/data/"
+#define BASE_PATH "/home/yongqi/Research/casdec/CascadingDecompGPU/external/ssb/data/"
 
 #if SF == 1
 #define DATA_DIR BASE_PATH "s1_columnar/"
@@ -33,6 +33,13 @@ using namespace std;
 #define P_LEN 800000
 #define S_LEN 20000
 #define C_LEN 300000
+#define D_LEN 2556
+#elif SF == 100
+#define DATA_DIR BASE_PATH "s100_columnar/"
+#define LO_LEN 600038145
+#define P_LEN 1400000
+#define S_LEN 200000
+#define C_LEN 3000000
 #define D_LEN 2556
 #else // 20
 #define DATA_DIR BASE_PATH "s20_columnar/"

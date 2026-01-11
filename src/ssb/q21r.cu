@@ -16,6 +16,8 @@
 #include "ssb_gpu_utils.h"
 #include "econfig.h"
 
+#include "./benchmark.hpp"
+
 using namespace std;
 using namespace cub;
 
@@ -237,50 +239,54 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
     int *d_datekey, int* d_year, int d_len,
     int *s_suppkey, int* s_region, int s_len,
     CachingDeviceAllocator&  g_allocator) {
-  SETUP_TIMING();
+  casdec::benchmark::Stream stream;
+  // SETUP_TIMING();
 
-  //float time_p1, time_p2, time_p3, time_p4;
-  float time_query;
-  chrono::high_resolution_clock::time_point st, finish;
-  st = chrono::high_resolution_clock::now();
+  // //float time_p1, time_p2, time_p3, time_p4;
+  // float time_query;
+  // chrono::high_resolution_clock::time_point st, finish;
+  // st = chrono::high_resolution_clock::now();
 
-  cudaEventRecord(start, 0);
+  // cudaEventRecord(start, 0);
 
   int *ht_d, *ht_p, *ht_s;
   int d_val_len = 19981230 - 19920101 + 1;
-  CubDebugExit(g_allocator.DeviceAllocate((void**)&ht_d, 2 * d_val_len * sizeof(int)));
-  CubDebugExit(g_allocator.DeviceAllocate((void**)&ht_p, 2 * p_len * sizeof(int)));
-  CubDebugExit(g_allocator.DeviceAllocate((void**)&ht_s, 2 * s_len * sizeof(int)));
-
-  CubDebugExit(cudaMemset(ht_d, 0, 2 * d_val_len * sizeof(int)));
-  CubDebugExit(cudaMemset(ht_p, 0, 2 * p_len * sizeof(int)));
-  CubDebugExit(cudaMemset(ht_s, 0, 2 * s_len * sizeof(int)));
-
-  build_hashtable_s<<<(s_len + 127)/128, 128>>>(s_region, s_suppkey, s_len, ht_s, s_len);
-  /*CHECK_ERROR();*/
-  //cout << "Done with S" << endl;
-
-  build_hashtable_p<<<(p_len + 127)/128, 128>>>(p_category, p_partkey, p_brand1, p_len, ht_p, p_len);
-  /*CHECK_ERROR();*/
-  //cout << "Done with P" << endl;
-
-  int d_val_min = 19920101;
-  build_hashtable_d<<<(d_len + 127)/128, 128>>>(d_datekey, d_year, d_len, ht_d, d_val_len, d_val_min);
-  /*CHECK_ERROR();*/
-  //cout << "Done with D" << endl;
+  CubDebugExit(g_allocator.DeviceAllocate((void**)&ht_d, 2 * d_val_len * sizeof(int), stream));
+  CubDebugExit(g_allocator.DeviceAllocate((void**)&ht_p, 2 * p_len * sizeof(int), stream));
+  CubDebugExit(g_allocator.DeviceAllocate((void**)&ht_s, 2 * s_len * sizeof(int), stream));
 
   int *res;
   int res_size = ((1998-1992+1) * (5 * 5 * 40));
   int res_array_size = res_size * 4;
-  CubDebugExit(g_allocator.DeviceAllocate((void**)&res, res_array_size * sizeof(int)));
+  CubDebugExit(g_allocator.DeviceAllocate((void**)&res, res_array_size * sizeof(int), stream));
 
-  CubDebugExit(cudaMemset(res, 0, res_array_size * sizeof(int)));
+	auto numTotalRuns = casdec::benchmark::getDefaultNumTotalRuns();
+
+  auto bench = casdec::benchmark::benchmarkKernel([&](int i) {
+  CubDebugExit(cudaMemsetAsync(ht_d, 0, 2 * d_val_len * sizeof(int), stream));
+  CubDebugExit(cudaMemsetAsync(ht_p, 0, 2 * p_len * sizeof(int), stream));
+  CubDebugExit(cudaMemsetAsync(ht_s, 0, 2 * s_len * sizeof(int), stream));
+
+  CubDebugExit(cudaMemsetAsync(res, 0, res_array_size * sizeof(int), stream));
+
+  build_hashtable_s<<<(s_len + 127)/128, 128, 0, stream>>>(s_region, s_suppkey, s_len, ht_s, s_len);
+  /*CHECK_ERROR();*/
+  //cout << "Done with S" << endl;
+
+  build_hashtable_p<<<(p_len + 127)/128, 128, 0, stream>>>(p_category, p_partkey, p_brand1, p_len, ht_p, p_len);
+  /*CHECK_ERROR();*/
+  //cout << "Done with P" << endl;
+
+  int d_val_min = 19920101;
+  build_hashtable_d<<<(d_len + 127)/128, 128, 0, stream>>>(d_datekey, d_year, d_len, ht_d, d_val_len, d_val_min);
+  /*CHECK_ERROR();*/
+  //cout << "Done with D" << endl;
 
   // Run
   const int num_threads = 128;
   const int items_per_thread = 4;
   int tile_size = num_threads * items_per_thread;
-  probe<num_threads, items_per_thread><<<(lo_len + tile_size - 1)/tile_size, 128>>>(
+  probe<num_threads, items_per_thread><<<(lo_len + tile_size - 1)/tile_size, 128, 0, stream>>>(
       lo_orderdate_val.block_start, lo_orderdate_val.data,
       lo_orderdate_rl.block_start, lo_orderdate_rl.data,
       lo_partkey.block_start, lo_partkey.data,
@@ -288,26 +294,32 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
       lo_revenue.block_start, lo_revenue.data,
       lo_len, ht_s, s_len, ht_p, p_len, ht_d, d_val_len, res);
 
-  cudaEventRecord(stop, 0);
-  cudaEventSynchronize(stop);
-  cudaEventElapsedTime(&time_query, start,stop);
+  }, numTotalRuns, stream);
+
+	std::cerr << "Query time: " << bench << " ms" << std::endl;
+	auto speed = lo_len / bench * 1e3;
+	std::cerr << "Processing speed: " << speed << " rows/s" << std::endl;
+
+  // cudaEventRecord(stop, 0);
+  // cudaEventSynchronize(stop);
+  // cudaEventElapsedTime(&time_query, start,stop);
 
   int* h_res = new int[res_array_size];
   CubDebugExit(cudaMemcpy(h_res, res, res_array_size * sizeof(int), cudaMemcpyDeviceToHost));
-  finish = chrono::high_resolution_clock::now();
-  std::chrono::duration<double> diff = finish - st;
+  // finish = chrono::high_resolution_clock::now();
+  // std::chrono::duration<double> diff = finish - st;
 
   /*cout << "Result:" << endl;*/
   int res_count = 0;
   for (int i=0; i<res_size; i++) {
     if (h_res[4*i] != 0) {
-      cout << h_res[4*i] << " " << h_res[4*i + 1] << " " << reinterpret_cast<unsigned long long*>(&h_res[4*i + 2])[0]  << endl;
+      // cout << h_res[4*i] << " " << h_res[4*i + 1] << " " << reinterpret_cast<unsigned long long*>(&h_res[4*i + 2])[0]  << endl;
       res_count += 1;
     }
   }
 
   cout << "Res Count: " << res_count << endl;
-  cout << "Time Taken Total: " << diff.count() * 1000 << endl;
+  // cout << "Time Taken Total: " << diff.count() * 1000 << endl;
 
   delete[] h_res;
 
@@ -316,7 +328,7 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
   CLEANUP(ht_p);
   CLEANUP(ht_s);
 
-  return time_query;
+  return bench.average;
 }
 
 
@@ -325,7 +337,7 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
  */
 int main(int argc, char** argv)
 {
-  int num_trials          = 5;
+  int num_trials          = 1;
 
   int *h_p_partkey = loadColumn<int>("p_partkey", P_LEN);
   int *h_p_brand1 = loadColumn<int>("p_brand1", P_LEN);
@@ -362,10 +374,10 @@ int main(int argc, char** argv)
         d_d_datekey, d_d_year, D_LEN,
         d_s_suppkey, d_s_region, S_LEN,
         g_allocator);
-    cout<< "{"
-        << "\"query\":21"
-        << ",\"time_query\":" << time_query
-        << "}" << endl;
+    // cout<< "{"
+    //     << "\"query\":21"
+    //     << ",\"time_query\":" << time_query
+    //     << "}" << endl;
   }
 
   return 0;
