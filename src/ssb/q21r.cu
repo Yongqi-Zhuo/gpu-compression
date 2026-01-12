@@ -4,6 +4,8 @@
 #include <iostream>
 #include <stdio.h>
 #include <curand.h>
+#include <filesystem>
+#include <fstream>
 
 #include <cuda.h>
 #include <cub/util_allocator.cuh>
@@ -300,6 +302,14 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
 	auto speed = lo_len / bench * 1e3;
 	std::cerr << "Processing speed: " << speed << " rows/s" << std::endl;
 
+	{
+		auto path = std::filesystem::path(DATA_DIR "benchmark/tile_based/q21.txt");
+		std::filesystem::create_directories(path.parent_path());
+		auto file = std::ofstream(path);
+		file << "time,speed,h2d_time,h2d_speed,h2d_bandwidth\n";
+		file << bench.average << "," << speed.average << ",";
+	}
+
   // cudaEventRecord(stop, 0);
   // cudaEventSynchronize(stop);
   // cudaEventElapsedTime(&time_query, start,stop);
@@ -339,21 +349,32 @@ int main(int argc, char** argv)
 {
   int num_trials          = 1;
 
-  int *h_p_partkey = loadColumn<int>("p_partkey", P_LEN);
-  int *h_p_brand1 = loadColumn<int>("p_brand1", P_LEN);
-  int *h_p_category = loadColumn<int>("p_category", P_LEN);
+  int *h_p_partkey = loadColumnPinned<int>("p_partkey", P_LEN);
+  int *h_p_brand1 = loadColumnPinned<int>("p_brand1", P_LEN);
+  int *h_p_category = loadColumnPinned<int>("p_category", P_LEN);
 
-  int *h_d_datekey = loadColumn<int>("d_datekey", D_LEN);
-  int *h_d_year = loadColumn<int>("d_year", D_LEN);
+  int *h_d_datekey = loadColumnPinned<int>("d_datekey", D_LEN);
+  int *h_d_year = loadColumnPinned<int>("d_year", D_LEN);
 
-  int *h_s_suppkey = loadColumn<int>("s_suppkey", S_LEN);
-  int *h_s_region = loadColumn<int>("s_region", S_LEN);
+  int *h_s_suppkey = loadColumnPinned<int>("s_suppkey", S_LEN);
+  int *h_s_region = loadColumnPinned<int>("s_region", S_LEN);
 
-  encoded_column d_lo_orderdate_val = loadEncodedColumnToGPURLE("lo_orderdate", "valbin", LO_LEN, g_allocator);
-  encoded_column d_lo_orderdate_rl = loadEncodedColumnToGPURLE("lo_orderdate", "rlbin", LO_LEN, g_allocator);
-  encoded_column d_lo_partkey = loadEncodedColumnToGPU("lo_partkey", ENCODING, LO_LEN, g_allocator);
-  encoded_column d_lo_suppkey = loadEncodedColumnToGPU("lo_suppkey", ENCODING, LO_LEN, g_allocator);
-  encoded_column d_lo_revenue = loadEncodedColumnToGPU("lo_revenue", ENCODING, LO_LEN, g_allocator);
+  encoded_column h_lo_orderdate_val = loadEncodedColumnPinnedRLE("lo_orderdate", "valbin", LO_LEN);
+  encoded_column h_lo_orderdate_rl = loadEncodedColumnPinnedRLE("lo_orderdate", "rlbin", LO_LEN);
+  encoded_column h_lo_partkey = loadEncodedColumnPinned("lo_partkey", ENCODING, LO_LEN);
+  encoded_column h_lo_suppkey = loadEncodedColumnPinned("lo_suppkey", ENCODING, LO_LEN);
+  encoded_column h_lo_revenue = loadEncodedColumnPinned("lo_revenue", ENCODING, LO_LEN);
+
+  encoded_column d_lo_orderdate_val = allocateEncodedColumnOnGPURLE(h_lo_orderdate_val, LO_LEN, g_allocator);
+  encoded_column d_lo_orderdate_rl = allocateEncodedColumnOnGPURLE(h_lo_orderdate_rl, LO_LEN, g_allocator);
+  encoded_column d_lo_partkey = allocateEncodedColumnOnGPU(h_lo_partkey, LO_LEN, g_allocator);
+  encoded_column d_lo_suppkey = allocateEncodedColumnOnGPU(h_lo_suppkey, LO_LEN, g_allocator);
+  encoded_column d_lo_revenue = allocateEncodedColumnOnGPU(h_lo_revenue, LO_LEN, g_allocator);
+  copyEncodedColumnRLE(h_lo_orderdate_val, d_lo_orderdate_val, LO_LEN);
+  copyEncodedColumnRLE(h_lo_orderdate_rl, d_lo_orderdate_rl, LO_LEN);
+  copyEncodedColumn(h_lo_partkey, d_lo_partkey, LO_LEN);
+  copyEncodedColumn(h_lo_suppkey, d_lo_suppkey, LO_LEN);
+  copyEncodedColumn(h_lo_revenue, d_lo_revenue, LO_LEN);
 
   int *d_d_datekey = loadColumnToGPU<int>(h_d_datekey, D_LEN, g_allocator);
   int *d_d_year = loadColumnToGPU<int>(h_d_year, D_LEN, g_allocator);
@@ -374,6 +395,44 @@ int main(int argc, char** argv)
         d_d_datekey, d_d_year, D_LEN,
         d_s_suppkey, d_s_region, S_LEN,
         g_allocator);
+
+    auto stream = casdec::benchmark::Stream();
+    auto benchH2D = casdec::benchmark::benchmarkKernel(
+      [&] {
+        copyEncodedColumnRLE(h_lo_orderdate_val, d_lo_orderdate_val, LO_LEN, stream);
+        copyEncodedColumnRLE(h_lo_orderdate_rl, d_lo_orderdate_rl, LO_LEN, stream);
+        copyEncodedColumn(h_lo_partkey, d_lo_partkey, LO_LEN, stream);
+        copyEncodedColumn(h_lo_suppkey, d_lo_suppkey, LO_LEN, stream);
+        copyEncodedColumn(h_lo_revenue, d_lo_revenue, LO_LEN, stream);
+        copyColumn(h_d_datekey, d_d_datekey, D_LEN, stream);
+        copyColumn(h_d_year, d_d_year, D_LEN, stream);
+        copyColumn(h_p_partkey, d_p_partkey, P_LEN, stream);
+        copyColumn(h_p_brand1, d_p_brand1, P_LEN, stream);
+        copyColumn(h_p_category, d_p_category, P_LEN, stream);
+        copyColumn(h_s_suppkey, d_s_suppkey, S_LEN, stream);
+        copyColumn(h_s_region, d_s_region, S_LEN, stream);
+      },
+      casdec::benchmark::getDefaultNumTotalRuns(), stream);
+    auto speedH2D = LO_LEN / benchH2D * 1e3;
+    auto bandwidthH2D = (
+      sizeOfEncodedColumnRLE(h_lo_orderdate_val, LO_LEN) +
+      sizeOfEncodedColumnRLE(h_lo_orderdate_rl, LO_LEN) +
+      sizeOfEncodedColumn(h_lo_partkey, LO_LEN) +
+      sizeOfEncodedColumn(h_lo_suppkey, LO_LEN) +
+      sizeOfEncodedColumn(h_lo_revenue, LO_LEN) +
+      (size_t)D_LEN * 2 * sizeof(int) +
+      (size_t)P_LEN * 3 * sizeof(int) +
+      (size_t)S_LEN * 2 * sizeof(int)
+    ) / benchH2D / 1e6;
+    std::cerr << "H2D time: " << benchH2D << " ms" << std::endl;
+    std::cerr << "H2D speed: " << speedH2D << " rows/s" << std::endl;
+    std::cerr << "H2D bandwidth: " << bandwidthH2D << " GB/s" << std::endl;
+
+    {
+      auto path = std::filesystem::path(DATA_DIR "benchmark/tile_based/q21.txt");
+      auto file = std::ofstream(path, std::ios::app);
+      file << benchH2D.average << "," << speedH2D.average << "," << bandwidthH2D.average << "\n";
+    }
     // cout<< "{"
     //     << "\"query\":21"
     //     << ",\"time_query\":" << time_query

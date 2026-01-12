@@ -4,6 +4,8 @@
 #include <iostream>
 #include <stdio.h>
 #include <curand.h>
+#include <filesystem>
+#include <fstream>
 
 #include <cuda.h>
 #include <cub/util_allocator.cuh>
@@ -183,6 +185,14 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
 	auto speed = lo_num_entries / bench * 1e3;
 	std::cerr << "Processing speed: " << speed << " rows/s" << std::endl;
 
+	{
+		auto path = std::filesystem::path(DATA_DIR "benchmark/tile_based/q11.txt");
+		std::filesystem::create_directories(path.parent_path());
+		auto file = std::ofstream(path);
+		file << "time,speed,h2d_time,h2d_speed,h2d_bandwidth\n";
+		file << bench.average << "," << speed.average << ",";
+	}
+
   unsigned long long revenue;
   CubDebugExit(cudaMemcpy(&revenue, d_sum, sizeof(long long), cudaMemcpyDeviceToHost));
 
@@ -205,11 +215,22 @@ int main(int argc, char** argv)
   int num_trials  = 1;
   string encoding = ENCODING;
 
-  encoded_column d_lo_extendedprice = loadEncodedColumnToGPU("lo_extendedprice", encoding, LO_LEN, g_allocator);
-  encoded_column d_lo_discount = loadEncodedColumnToGPU("lo_discount", encoding, LO_LEN, g_allocator);
-  encoded_column d_lo_quantity = loadEncodedColumnToGPU("lo_quantity", encoding, LO_LEN, g_allocator);
-  encoded_column d_lo_orderdate_val = loadEncodedColumnToGPURLE("lo_orderdate", "valbin", LO_LEN, g_allocator);
-  encoded_column d_lo_orderdate_rl = loadEncodedColumnToGPURLE("lo_orderdate", "rlbin", LO_LEN, g_allocator);
+  encoded_column h_lo_extendedprice = loadEncodedColumnPinned("lo_extendedprice", encoding, LO_LEN);
+  encoded_column h_lo_discount = loadEncodedColumnPinned("lo_discount", encoding, LO_LEN);
+  encoded_column h_lo_quantity = loadEncodedColumnPinned("lo_quantity", encoding, LO_LEN);
+  encoded_column h_lo_orderdate_val = loadEncodedColumnPinnedRLE("lo_orderdate", "valbin", LO_LEN);
+  encoded_column h_lo_orderdate_rl = loadEncodedColumnPinnedRLE("lo_orderdate", "rlbin", LO_LEN);
+
+  encoded_column d_lo_extendedprice = allocateEncodedColumnOnGPU(h_lo_extendedprice, LO_LEN, g_allocator);
+  encoded_column d_lo_discount = allocateEncodedColumnOnGPU(h_lo_discount, LO_LEN, g_allocator);
+  encoded_column d_lo_quantity = allocateEncodedColumnOnGPU(h_lo_quantity, LO_LEN, g_allocator);
+  encoded_column d_lo_orderdate_val = allocateEncodedColumnOnGPURLE(h_lo_orderdate_val, LO_LEN, g_allocator);
+  encoded_column d_lo_orderdate_rl = allocateEncodedColumnOnGPURLE(h_lo_orderdate_rl, LO_LEN, g_allocator);
+  copyEncodedColumn(h_lo_extendedprice, d_lo_extendedprice, LO_LEN);
+  copyEncodedColumn(h_lo_discount, d_lo_discount, LO_LEN);
+  copyEncodedColumn(h_lo_quantity, d_lo_quantity, LO_LEN);
+  copyEncodedColumnRLE(h_lo_orderdate_val, d_lo_orderdate_val, LO_LEN);
+  copyEncodedColumnRLE(h_lo_orderdate_rl, d_lo_orderdate_rl, LO_LEN);
 
   cout << "** LOADED DATA TO GPU **" << endl;
   cout << "Encoding: " << encoding << endl;
@@ -219,6 +240,34 @@ int main(int argc, char** argv)
     time_query = runQuery(d_lo_orderdate_val, d_lo_orderdate_rl, d_lo_discount, d_lo_quantity, 
             d_lo_extendedprice, 
             LO_LEN, g_allocator);
+
+    auto stream = casdec::benchmark::Stream();
+    auto benchH2D = casdec::benchmark::benchmarkKernel(
+      [&] {
+        copyEncodedColumn(h_lo_extendedprice, d_lo_extendedprice, LO_LEN, stream);
+        copyEncodedColumn(h_lo_discount, d_lo_discount, LO_LEN, stream);
+        copyEncodedColumn(h_lo_quantity, d_lo_quantity, LO_LEN, stream);
+        copyEncodedColumnRLE(h_lo_orderdate_val, d_lo_orderdate_val, LO_LEN, stream);
+        copyEncodedColumnRLE(h_lo_orderdate_rl, d_lo_orderdate_rl, LO_LEN, stream);
+      },
+      casdec::benchmark::getDefaultNumTotalRuns(), stream);
+    auto speedH2D = LO_LEN / benchH2D * 1e3;
+    auto bandwidthH2D = (
+      sizeOfEncodedColumn(h_lo_extendedprice, LO_LEN) +
+      sizeOfEncodedColumn(h_lo_discount, LO_LEN) +
+      sizeOfEncodedColumn(h_lo_quantity, LO_LEN) +
+      sizeOfEncodedColumnRLE(h_lo_orderdate_val, LO_LEN) +
+      sizeOfEncodedColumnRLE(h_lo_orderdate_rl, LO_LEN)
+    ) / benchH2D / 1e6;
+    std::cerr << "H2D time: " << benchH2D << " ms" << std::endl;
+    std::cerr << "H2D speed: " << speedH2D << " rows/s" << std::endl;
+    std::cerr << "H2D bandwidth: " << bandwidthH2D << " GB/s" << std::endl;
+
+    {
+      auto path = std::filesystem::path(DATA_DIR "benchmark/tile_based/q11.txt");
+      auto file = std::ofstream(path, std::ios::app);
+      file << benchH2D.average << "," << speedH2D.average << "," << bandwidthH2D.average << "\n";
+    }
     // cout<< "{"
     //     << "\"query\":11" 
     //     << ",\"time_query\":" << time_query
