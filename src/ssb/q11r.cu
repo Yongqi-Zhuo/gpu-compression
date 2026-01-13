@@ -41,7 +41,7 @@ __global__ void QueryKernel(
     uint* lo_orderdate_rl_block_start, uint* lo_orderdate_rl_data,
     uint* lo_discount_block_start, uint* lo_discount_data,
     uint* lo_quantity_block_start, uint* lo_quantity_data,
-    uint* lo_extendedprice_block_start, uint* lo_extendedprice_data,
+    int* lo_extendedprice,
     int lo_num_entries, unsigned long long* revenue) {
   typedef cub::BlockReduce<int, BLOCK_THREADS> BlockReduceInt;
 
@@ -119,7 +119,7 @@ __global__ void QueryKernel(
 
   __syncthreads();
 
-  ENCODINGKERNEL<BLOCK_THREADS,ITEMS_PER_THREAD>(lo_extendedprice_block_start, lo_extendedprice_data, temp_storage.shared_buffer, items2, is_last_tile, num_tile_items);
+  BlockPredLoad<int, int, BLOCK_THREADS,ITEMS_PER_THREAD>(lo_extendedprice + tile_offset, items2, num_tile_items, selection_flags);
 
   __syncthreads();
 
@@ -144,7 +144,7 @@ __global__ void QueryKernel(
 
 float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl, 
   encoded_column lo_discount, encoded_column lo_quantity, 
-    encoded_column lo_extendedprice,
+    int *lo_extendedprice,
     int lo_num_entries, CachingDeviceAllocator&  g_allocator) {
   casdec::benchmark::Stream stream;
   // SETUP_TIMING();
@@ -172,7 +172,7 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl,
           lo_orderdate_rl.block_start, lo_orderdate_rl.data,
           lo_discount.block_start, lo_discount.data,
           lo_quantity.block_start, lo_quantity.data,
-          lo_extendedprice.block_start, lo_extendedprice.data,
+          lo_extendedprice,
           lo_num_entries, d_sum);
 
   // cudaEventRecord(stop, 0);
@@ -215,18 +215,17 @@ int main(int argc, char** argv)
   int num_trials  = 1;
   string encoding = ENCODING;
 
-  encoded_column h_lo_extendedprice = loadEncodedColumnPinned("lo_extendedprice", encoding, LO_LEN);
+  int *h_lo_extendedprice = loadColumnPinned<int>("lo_extendedprice", LO_LEN);
   encoded_column h_lo_discount = loadEncodedColumnPinned("lo_discount", encoding, LO_LEN);
   encoded_column h_lo_quantity = loadEncodedColumnPinned("lo_quantity", encoding, LO_LEN);
   encoded_column h_lo_orderdate_val = loadEncodedColumnPinnedRLE("lo_orderdate", "valbin", LO_LEN);
   encoded_column h_lo_orderdate_rl = loadEncodedColumnPinnedRLE("lo_orderdate", "rlbin", LO_LEN);
 
-  encoded_column d_lo_extendedprice = allocateEncodedColumnOnGPU(h_lo_extendedprice, LO_LEN, g_allocator);
+  int *d_lo_extendedprice = loadColumnToGPU(h_lo_extendedprice, LO_LEN, g_allocator);
   encoded_column d_lo_discount = allocateEncodedColumnOnGPU(h_lo_discount, LO_LEN, g_allocator);
   encoded_column d_lo_quantity = allocateEncodedColumnOnGPU(h_lo_quantity, LO_LEN, g_allocator);
   encoded_column d_lo_orderdate_val = allocateEncodedColumnOnGPURLE(h_lo_orderdate_val, LO_LEN, g_allocator);
   encoded_column d_lo_orderdate_rl = allocateEncodedColumnOnGPURLE(h_lo_orderdate_rl, LO_LEN, g_allocator);
-  copyEncodedColumn(h_lo_extendedprice, d_lo_extendedprice, LO_LEN);
   copyEncodedColumn(h_lo_discount, d_lo_discount, LO_LEN);
   copyEncodedColumn(h_lo_quantity, d_lo_quantity, LO_LEN);
   copyEncodedColumnRLE(h_lo_orderdate_val, d_lo_orderdate_val, LO_LEN);
@@ -244,7 +243,7 @@ int main(int argc, char** argv)
     auto stream = casdec::benchmark::Stream();
     auto benchH2D = casdec::benchmark::benchmarkKernel(
       [&] {
-        copyEncodedColumn(h_lo_extendedprice, d_lo_extendedprice, LO_LEN, stream);
+        copyColumn(h_lo_extendedprice, d_lo_extendedprice, LO_LEN, stream);
         copyEncodedColumn(h_lo_discount, d_lo_discount, LO_LEN, stream);
         copyEncodedColumn(h_lo_quantity, d_lo_quantity, LO_LEN, stream);
         copyEncodedColumnRLE(h_lo_orderdate_val, d_lo_orderdate_val, LO_LEN, stream);
@@ -253,7 +252,7 @@ int main(int argc, char** argv)
       casdec::benchmark::getDefaultNumTotalRuns(), stream);
     auto speedH2D = LO_LEN / benchH2D * 1e3;
     auto bandwidthH2D = (
-      sizeOfEncodedColumn(h_lo_extendedprice, LO_LEN) +
+      (size_t)LO_LEN * sizeof(int) +
       sizeOfEncodedColumn(h_lo_discount, LO_LEN) +
       sizeOfEncodedColumn(h_lo_quantity, LO_LEN) +
       sizeOfEncodedColumnRLE(h_lo_orderdate_val, LO_LEN) +

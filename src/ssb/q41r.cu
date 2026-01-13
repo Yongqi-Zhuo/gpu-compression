@@ -56,8 +56,8 @@ __global__ void probe(//int* lo_orderdate, int* lo_partkey, int* lo_custkey, int
     uint* lo_custkey_rl_block_start, uint* lo_custkey_rl_data,
     uint* lo_partkey_block_start, uint* lo_partkey_data,
     uint* lo_suppkey_block_start, uint* lo_suppkey_data,
-    uint* lo_revenue_block_start, uint* lo_revenue_data,
     uint* lo_supplycost_block_start, uint* lo_supplycost_data,
+    int* lo_revenue,
     int lo_len,
     int* ht_p, int p_len,
     int* ht_s, int s_len,
@@ -202,14 +202,12 @@ __global__ void probe(//int* lo_orderdate, int* lo_partkey, int* lo_custkey, int
 
   __syncthreads();
 
-  ENCODINGKERNEL<BLOCK_THREADS,ITEMS_PER_THREAD>(lo_revenue_block_start, lo_revenue_data, temp_storage.shared_buffer, revenue, is_last_tile, num_tile_items);
-
+  BlockPredLoad<int, int, BLOCK_THREADS,ITEMS_PER_THREAD>(lo_revenue + tile_offset, revenue, num_tile_items, selection_flags);
 
   // Barrier for smem reuse
   __syncthreads();
 
   ENCODINGKERNEL<BLOCK_THREADS,ITEMS_PER_THREAD>(lo_supplycost_block_start, lo_supplycost_data, temp_storage.shared_buffer, items, is_last_tile, num_tile_items);
-
 
   // Barrier for smem reuse
   __syncthreads();
@@ -290,7 +288,7 @@ void build_hashtable_d(int *dim_key, int *dim_val, int num_tuples, int *hash_tab
 }
 
 float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl, encoded_column lo_custkey_val, encoded_column lo_custkey_rl, encoded_column lo_partkey,
-    encoded_column lo_suppkey, encoded_column lo_revenue, encoded_column lo_supplycost, int lo_len,
+    encoded_column lo_suppkey, encoded_column lo_supplycost, int *lo_revenue, int lo_len,
     int *d_datekey, int* d_year, int d_len,
     int *p_partkey, int* p_mfgr, int p_len,
     int *s_suppkey, int* s_region, int s_len,
@@ -348,8 +346,8 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl, 
       lo_custkey_rl.block_start, lo_custkey_rl.data,
       lo_partkey.block_start, lo_partkey.data,
       lo_suppkey.block_start, lo_suppkey.data,
-      lo_revenue.block_start, lo_revenue.data,
       lo_supplycost.block_start, lo_supplycost.data, 
+      lo_revenue,
       lo_len, 
       ht_p, p_len, ht_s, s_len, ht_c, c_len, ht_d, d_val_len, res);
   }, numTotalRuns, stream);
@@ -379,7 +377,7 @@ float runQuery(encoded_column lo_orderdate_val, encoded_column lo_orderdate_rl, 
   int res_count = 0;
   for (int i=0; i<res_size; i++) {
     if (h_res[4*i] != 0) {
-      // cout << h_res[4*i] << " " << h_res[4*i + 1] << " " << reinterpret_cast<unsigned long long*>(&h_res[4*i + 2])[0]  << endl;
+      cout << h_res[4*i] << " " << h_res[4*i + 1] << " " << reinterpret_cast<unsigned long long*>(&h_res[4*i + 2])[0]  << endl;
       res_count += 1;
     }
   }
@@ -420,8 +418,8 @@ int main(int argc, char** argv)
   encoded_column h_lo_custkey_rl = loadEncodedColumnPinnedRLE("lo_custkey", "rlbin", LO_LEN);
   encoded_column h_lo_suppkey = loadEncodedColumnPinned("lo_suppkey", ENCODING, LO_LEN);
   encoded_column h_lo_partkey = loadEncodedColumnPinned("lo_partkey", ENCODING, LO_LEN);
-  encoded_column h_lo_revenue = loadEncodedColumnPinned("lo_revenue", ENCODING, LO_LEN);
   encoded_column h_lo_supplycost = loadEncodedColumnPinned("lo_supplycost", ENCODING, LO_LEN);
+  int *h_lo_revenue = loadColumnPinned<int>("lo_revenue", LO_LEN);
 
   encoded_column d_lo_orderdate_val = allocateEncodedColumnOnGPURLE(h_lo_orderdate_val, LO_LEN, g_allocator);
   encoded_column d_lo_orderdate_rl = allocateEncodedColumnOnGPURLE(h_lo_orderdate_rl, LO_LEN, g_allocator);
@@ -429,7 +427,6 @@ int main(int argc, char** argv)
   encoded_column d_lo_custkey_rl = allocateEncodedColumnOnGPURLE(h_lo_custkey_rl, LO_LEN, g_allocator);
   encoded_column d_lo_suppkey = allocateEncodedColumnOnGPU(h_lo_suppkey, LO_LEN, g_allocator);
   encoded_column d_lo_partkey = allocateEncodedColumnOnGPU(h_lo_partkey, LO_LEN, g_allocator);
-  encoded_column d_lo_revenue = allocateEncodedColumnOnGPU(h_lo_revenue, LO_LEN, g_allocator);
   encoded_column d_lo_supplycost = allocateEncodedColumnOnGPU(h_lo_supplycost, LO_LEN, g_allocator);
   copyEncodedColumnRLE(h_lo_orderdate_val, d_lo_orderdate_val, LO_LEN);
   copyEncodedColumnRLE(h_lo_orderdate_rl, d_lo_orderdate_rl, LO_LEN);
@@ -437,8 +434,8 @@ int main(int argc, char** argv)
   copyEncodedColumnRLE(h_lo_custkey_rl, d_lo_custkey_rl, LO_LEN);
   copyEncodedColumn(h_lo_suppkey, d_lo_suppkey, LO_LEN);
   copyEncodedColumn(h_lo_partkey, d_lo_partkey, LO_LEN);
-  copyEncodedColumn(h_lo_revenue, d_lo_revenue, LO_LEN);
   copyEncodedColumn(h_lo_supplycost, d_lo_supplycost, LO_LEN);
+  int *d_lo_revenue = loadColumnToGPU(h_lo_revenue, LO_LEN, g_allocator);
 
   int *d_d_datekey = loadColumnToGPU<int>(h_d_datekey, D_LEN, g_allocator);
   int *d_d_year = loadColumnToGPU<int>(h_d_year, D_LEN, g_allocator);
@@ -459,7 +456,7 @@ int main(int argc, char** argv)
     float time_query;
     time_query = runQuery(
         d_lo_orderdate_val, d_lo_orderdate_rl, d_lo_custkey_val, d_lo_custkey_rl, 
-        d_lo_partkey, d_lo_suppkey, d_lo_revenue, d_lo_supplycost, LO_LEN,
+        d_lo_partkey, d_lo_suppkey, d_lo_supplycost, d_lo_revenue, LO_LEN,
         d_d_datekey, d_d_year, D_LEN,
         d_p_partkey, d_p_mfgr, P_LEN,
         d_s_suppkey, d_s_region, S_LEN,
@@ -475,8 +472,8 @@ int main(int argc, char** argv)
         copyEncodedColumnRLE(h_lo_custkey_rl, d_lo_custkey_rl, LO_LEN, stream);
         copyEncodedColumn(h_lo_suppkey, d_lo_suppkey, LO_LEN, stream);
         copyEncodedColumn(h_lo_partkey, d_lo_partkey, LO_LEN, stream);
-        copyEncodedColumn(h_lo_revenue, d_lo_revenue, LO_LEN, stream);
         copyEncodedColumn(h_lo_supplycost, d_lo_supplycost, LO_LEN, stream);
+        copyColumn(h_lo_revenue, d_lo_revenue, LO_LEN, stream);
       },
       casdec::benchmark::getDefaultNumTotalRuns(), stream);
     auto speedH2D = LO_LEN / benchH2D * 1e3;
@@ -487,8 +484,8 @@ int main(int argc, char** argv)
       sizeOfEncodedColumnRLE(h_lo_custkey_rl, LO_LEN) +
       sizeOfEncodedColumn(h_lo_suppkey, LO_LEN) +
       sizeOfEncodedColumn(h_lo_partkey, LO_LEN) +
-      sizeOfEncodedColumn(h_lo_revenue, LO_LEN) +
       sizeOfEncodedColumn(h_lo_supplycost, LO_LEN) +
+      (size_t)LO_LEN * sizeof(int) +
       (size_t)D_LEN * sizeof(int) * 2 +
       (size_t)P_LEN * sizeof(int) * 2 +
       (size_t)S_LEN * sizeof(int) * 2 +
